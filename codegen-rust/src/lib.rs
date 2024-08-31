@@ -1,12 +1,11 @@
 use std::path::Path;
 use std::{fs::File, io::Write, path::PathBuf};
 
-use enum_tokens::{TomlRpcEnum, TomlRpcEnumField};
-use heck::{ToPascalCase, ToSnakeCase};
-use message_tokens::{TomlRpcMessage, TomlRpcMessageField};
+use enum_tokens::TomlRpcEnum;
+use message_tokens::TomlRpcMessage;
 use prettyplease::unparse;
 use proc_macro2::TokenStream;
-use service_tokens::{TomlRpcService, TomlRpcServiceMethod};
+use service_tokens::TomlRpcService;
 use syn::parse_quote;
 use toml::{Table, Value};
 
@@ -102,39 +101,14 @@ impl Builder {
     ) -> Result<Vec<TomlRpcMessage>, Error> {
         messages
             .into_iter()
-            .map(|(message_name, fields)| -> Result<_, Error> {
-                let fields = fields
-                    .as_table()
-                    .ok_or(Error::Types("message is not a table"))?
-                    .into_iter()
-                    .map(|(tag, data)| -> Result<_, Error> {
-                        let tag = tag
-                            .parse::<u32>()
-                            .map_err(|_| Error::Types("tag is not a number"))?;
-                        let data = data
-                            .as_array()
-                            .ok_or(Error::Types("field value is not an array"))?;
-                        if data.len() != 2 {
-                            return Err(Error::Types(
-                                "field value must be a two element array (name, type)",
-                            ));
-                        }
-                        let field_name = data[0]
-                            .as_str()
-                            .ok_or(Error::Types("field name is not a string"))?
-                            .to_string();
-                        let field_type = data[1]
-                            .as_str()
-                            .ok_or(Error::Types("field type is not a string"))?
-                            .to_string();
-
-                        Ok((tag, field_name, field_type))
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?
-                    .into_iter()
-                    .map(|(tag, name, field_type)| TomlRpcMessageField::new(tag, name, field_type))
-                    .collect::<Vec<_>>();
-                Ok(TomlRpcMessage::new(message_name.to_string(), fields))
+            .map(|(name, fields)| -> Result<_, Error> {
+                TomlRpcMessage::from_toml(
+                    name,
+                    fields
+                        .as_table()
+                        .cloned()
+                        .ok_or(Error::Types("enum is not a table"))?,
+                )
             })
             .collect::<Result<Vec<TomlRpcMessage>, Error>>()
     }
@@ -145,27 +119,14 @@ impl Builder {
     ) -> Result<Vec<TomlRpcEnum>, Error> {
         enums
             .into_iter()
-            .map(|(enum_name, variants)| -> Result<_, Error> {
-                let fields = variants
-                    .as_table()
-                    .ok_or(Error::Types("enum is not a table"))?
-                    .into_iter()
-                    .map(|(variant, numerical_value)| -> Result<_, Error> {
-                        let numerical_value: u32 = numerical_value
-                            .as_integer()
-                            .ok_or(Error::Types("field value is not an array"))?
-                            .try_into()
-                            .map_err(|_| Error::Types("enum variant value must be a u32"))?;
-
-                        Ok((variant, numerical_value))
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?
-                    .into_iter()
-                    .map(|(variant, numerical_value)| {
-                        TomlRpcEnumField::new(variant.to_pascal_case(), numerical_value)
-                    })
-                    .collect::<Vec<_>>();
-                Ok(TomlRpcEnum::new(enum_name.to_pascal_case(), fields))
+            .map(|(name, variants)| {
+                TomlRpcEnum::from_toml(
+                    name,
+                    variants
+                        .as_table()
+                        .cloned()
+                        .ok_or(Error::Types("enum is not a table"))?,
+                )
             })
             .collect::<Result<Vec<TomlRpcEnum>, Error>>()
     }
@@ -179,79 +140,15 @@ impl Builder {
         services
             .into_iter()
             .map(|(service_name, methods)| -> Result<_, Error> {
-                let methods = methods
-                    .as_table()
-                    .ok_or(Error::Types("rpc is not a table"))?
-                    .into_iter()
-                    .map(|(method_name, method_values)| -> Result<_, Error> {
-                        let method_values = method_values
-                            .as_array()
-                            .ok_or(Error::Types("field value is not an array"))?;
-                        if method_values.len() != 2 {
-                            return Err(Error::Types(
-                                "field value must be a two element array (name, type)",
-                            ));
-                        }
-                        let method_input = method_values[0]
-                            .as_str()
-                            .ok_or(Error::Types("method input is not a string"))?
-                            .to_string();
-                        let method_output = method_values[1]
-                            .as_str()
-                            .ok_or(Error::Types("method output is not a string"))?
-                            .to_string();
-
-                        // verify that input and output exist:
-                        let (input_type, input_name) = method_input.split_once('.').ok_or(
-                            Error::Types("method input must be in the form <message/enum>.name"),
-                        )?;
-                        match input_type {
-                            "message" => {
-                                messages
-                                    .iter()
-                                    .find(|message| message.struct_name == input_name)
-                                    .ok_or(Error::Types("message not found"))?;
-                            }
-                            "enum" => {
-                                enums
-                                    .iter()
-                                    .find(|enum_| enum_.enum_name == input_name)
-                                    .ok_or(Error::Types("enum not found"))?;
-                            }
-                            _ => return Err(Error::Types("unknown input type")),
-                        }
-
-                        let (output_type, output_name) = method_output.split_once('.').ok_or(
-                            Error::Types("method output must be in the form <message/enum>.name"),
-                        )?;
-                        match output_type {
-                            "message" => {
-                                messages
-                                    .iter()
-                                    .find(|message| message.struct_name == output_name)
-                                    .ok_or(Error::Types("message not found"))?;
-                            }
-                            "enum" => {
-                                enums
-                                    .iter()
-                                    .find(|enum_| enum_.enum_name == output_name)
-                                    .ok_or(Error::Types("enum not found"))?;
-                            }
-                            _ => return Err(Error::Types("unknown output type")),
-                        }
-                        Ok((
-                            method_name.to_snake_case(),
-                            input_name.to_pascal_case(),
-                            output_name.to_pascal_case(),
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?
-                    .into_iter()
-                    .map(|(method_name, method_input, method_output)| {
-                        TomlRpcServiceMethod::new(method_name, method_input, method_output)
-                    })
-                    .collect::<Vec<_>>();
-                Ok(TomlRpcService::new(service_name.to_pascal_case(), methods))
+                TomlRpcService::from_toml(
+                    service_name.to_string(),
+                    methods
+                        .as_table()
+                        .cloned()
+                        .ok_or(Error::Types("service is not a table"))?,
+                    messages,
+                    enums,
+                )
             })
             .collect::<Result<Vec<TomlRpcService>, Error>>()
     }
