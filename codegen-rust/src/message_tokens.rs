@@ -52,7 +52,9 @@ impl TomlRpcMessageField {
             "String" => quote! { String },
             _ => quote! { Unknown },
         };
+        let tag = format!(" tag: {}", self.tag);
         quote! {
+            #[doc = #tag]
             pub #field_ident: #rust_type,
         }
     }

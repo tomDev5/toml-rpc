@@ -8,7 +8,9 @@ fn parse() {
 
     let generated = String::from_utf8(generated).expect("generated non-utf8 data");
     let expected = "pub struct MyMessage {
+    /// tag: 1
     pub a: String,
+    /// tag: 2
     pub b: u32,
 }
 #[repr(u32)]
