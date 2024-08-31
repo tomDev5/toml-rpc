@@ -61,7 +61,7 @@ impl Builder {
             .get("message")
             .and_then(Value::as_table)
             .cloned()
-            .unwrap_or_else(|| Table::default());
+            .unwrap_or_else(Table::default);
         let messages = self.generate_messages(messages.clone())?;
         tokens.extend(
             messages
@@ -74,7 +74,7 @@ impl Builder {
             .get("enum")
             .and_then(Value::as_table)
             .cloned()
-            .unwrap_or_else(|| Table::default());
+            .unwrap_or_else(Table::default);
         let enums = self.generate_enums(enums.clone())?;
         tokens.extend(
             enums
